@@ -45,6 +45,7 @@ type INode struct {
 	IndirectBlock  int
 	CreateTime     int64
 	LastModifyTime int64
+	Size           int
 }
 
 type DirectoryEntry struct {
@@ -268,6 +269,12 @@ func Open(mode int, name string, parentDir INode) (INode, int) {
 	for _, entry := range directoryEntryBlock {
 		//not really distinguishing read vs write here.
 		if string(entry.Name[:len(name)]) == name {
+			if mode == WRITE {
+				// If the file already exists, truncate it to zero length
+				fileInode := getInodeFromDisk(entry.Inode)
+				fileInode.Size = 0
+				writeInodeToDisk(&fileInode, entry.Inode, ReadSuperBlock())
+			}
 			return getInodeFromDisk(entry.Inode), entry.Inode //if file is here, I'll just return it and the Inode Number for now
 		}
 		if entry.Inode == 0 && entry.Name[0] != '.' && entry.Name[1] != '.' { //once we get to invalid entries, get out of loop
@@ -275,8 +282,25 @@ func Open(mode int, name string, parentDir INode) (INode, int) {
 		}
 		validDirectoryEntries++
 	}
-	//if we got here then the file wasn't in the directory
-	if mode == CREATE {
+	if mode == READ {
+		// If the file does not exist, create a new file
+		newInode, newInodeNum := createNewInode(ReadSuperBlock())
+		newFile := DirectoryEntry{
+			Inode: newInodeNum,
+		}
+		for num, char := range name {
+			if num >= 20 {
+				break
+			}
+			newFile.Name[num] = byte(char)
+		}
+		directoryEntryBlock[validDirectoryEntries] = newFile
+		//write the directory entry back to the disk block
+		currentDirectoryBlockBytes := EncodeToBytes(directoryEntryBlock)
+		copy(Disk[parentDir.DirectBlock1][:], currentDirectoryBlockBytes)
+		return newInode, newInodeNum
+	} else if mode == WRITE {
+		// If the file does not exist and we are in write mode, create a new file
 		newInode, newInodeNum := createNewInode(ReadSuperBlock())
 		newFile := DirectoryEntry{
 			Inode: newInodeNum,
@@ -539,4 +563,62 @@ func getIndirectBlock(file *INode) IndirectBlock {
 
 func getIndirectBlockFromDisk(indirectBlockNum int) [1024]byte {
 	return Disk[indirectBlockNum]
+}
+
+func Ls(inode *INode) []string {
+	if !inode.IsDirectory {
+		log.Fatal("Not a directory")
+	}
+	dirBlock := Disk[inode.DirectBlock1]
+	dirEntries := DirectoryBlock{}
+	decoder := gob.NewDecoder(bytes.NewReader(dirBlock[:]))
+	err := decoder.Decode(&dirEntries)
+	if err != nil {
+		log.Fatal("Error decoding directory block", err)
+	}
+	files := make([]string, 0)
+	for _, entry := range dirEntries {
+		if entry.Inode != 0 {
+			files = append(files, string(entry.Name[:]))
+		}
+	}
+	return files
+}
+
+func getInodeFromDiskByName(name string, parentDirInode INode) INode {
+	dirBlock := Disk[parentDirInode.DirectBlock1]
+	dirEntries := DirectoryBlock{}
+	decoder := gob.NewDecoder(bytes.NewReader(dirBlock[:]))
+	err := decoder.Decode(&dirEntries)
+	if err != nil {
+		log.Fatal("Error decoding directory block", err)
+	}
+	for _, entry := range dirEntries {
+		if entry.Inode != 0 && string(entry.Name[:]) == name {
+			return getInodeFromDisk(entry.Inode)
+		}
+	}
+	return INode{}
+}
+
+func Rm(parentDirInode INode, fileName string) {
+	parentDirInode, _ = Open(READ, ".", parentDirInode)
+	// find inode number of file
+	fileInodeNum := -1
+	dirBlock := Disk[parentDirInode.DirectBlock1]
+	dirEntries := DirectoryBlock{}
+	decoder := gob.NewDecoder(bytes.NewReader(dirBlock[:]))
+	err := decoder.Decode(&dirEntries)
+	if err != nil {
+		log.Fatal("Error decoding directory block", err)
+	}
+	for _, entry := range dirEntries {
+		if strings.TrimRight(string(entry.Name[:]), "\x00") == fileName {
+			fileInodeNum = entry.Inode
+			break
+		}
+	}
+	Unlink(fileInodeNum, parentDirInode)
+	writeInodeToDisk(&parentDirInode, fileInodeNum, ReadSuperBlock())
+
 }
