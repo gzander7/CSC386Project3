@@ -3,6 +3,7 @@ package FileSystem
 import (
 	"bytes"
 	"encoding/gob"
+	"fmt"
 	"log"
 	"strings"
 	"time"
@@ -45,7 +46,6 @@ type INode struct {
 	IndirectBlock  int
 	CreateTime     int64
 	LastModifyTime int64
-	Size           int
 }
 
 type DirectoryEntry struct {
@@ -154,7 +154,7 @@ func CreateDirectoryFile(parentInode int, folderinode int) (retBlock DirectoryBl
 		if !currentInode.IsValid {
 			currentInode.IsValid = true
 		}
-		writeInodeToDisk(&currentInode, folderinode, ReadSuperBlock())
+		WriteInodeToDisk(&currentInode, folderinode, ReadSuperBlock())
 	}
 	dot := DirectoryEntry{
 		Inode: folderinode,
@@ -269,12 +269,6 @@ func Open(mode int, name string, parentDir INode) (INode, int) {
 	for _, entry := range directoryEntryBlock {
 		//not really distinguishing read vs write here.
 		if string(entry.Name[:len(name)]) == name {
-			if mode == WRITE {
-				// If the file already exists, truncate it to zero length
-				fileInode := getInodeFromDisk(entry.Inode)
-				fileInode.Size = 0
-				writeInodeToDisk(&fileInode, entry.Inode, ReadSuperBlock())
-			}
 			return getInodeFromDisk(entry.Inode), entry.Inode //if file is here, I'll just return it and the Inode Number for now
 		}
 		if entry.Inode == 0 && entry.Name[0] != '.' && entry.Name[1] != '.' { //once we get to invalid entries, get out of loop
@@ -282,25 +276,8 @@ func Open(mode int, name string, parentDir INode) (INode, int) {
 		}
 		validDirectoryEntries++
 	}
-	if mode == READ {
-		// If the file does not exist, create a new file
-		newInode, newInodeNum := createNewInode(ReadSuperBlock())
-		newFile := DirectoryEntry{
-			Inode: newInodeNum,
-		}
-		for num, char := range name {
-			if num >= 20 {
-				break
-			}
-			newFile.Name[num] = byte(char)
-		}
-		directoryEntryBlock[validDirectoryEntries] = newFile
-		//write the directory entry back to the disk block
-		currentDirectoryBlockBytes := EncodeToBytes(directoryEntryBlock)
-		copy(Disk[parentDir.DirectBlock1][:], currentDirectoryBlockBytes)
-		return newInode, newInodeNum
-	} else if mode == WRITE {
-		// If the file does not exist and we are in write mode, create a new file
+	//if we got here then the file wasn't in the directory
+	if mode == CREATE {
 		newInode, newInodeNum := createNewInode(ReadSuperBlock())
 		newFile := DirectoryEntry{
 			Inode: newInodeNum,
@@ -345,11 +322,11 @@ func createNewInode(sBlock SuperBlock) (INode, int) {
 		CreateTime:     time.Now().Unix(),
 		LastModifyTime: time.Now().Unix(),
 	}
-	writeInodeToDisk(&newInode, freeInodeLoc, sBlock)
+	WriteInodeToDisk(&newInode, freeInodeLoc, sBlock)
 	return newInode, freeInodeLoc
 }
 
-func writeInodeToDisk(inode *INode, InodeNum int, sblock SuperBlock) {
+func WriteInodeToDisk(inode *INode, InodeNum int, sblock SuperBlock) {
 	InodeAsBytes := EncodeToBytes(inode)
 	InodeBlock := InodeNum / (BLOCK_SIZE / INODE_SIZE) //once again this is floor integer division
 	InodeLocInBlock := InodeNum % (BLOCK_SIZE / INODE_SIZE)
@@ -388,10 +365,11 @@ func Unlink(inodeNumToDelete int, parentDir INode) {
 			writeInodeBitmapToDisk(inodeBitmap, ReadSuperBlock())
 			inodeStruct := getInodeFromDisk(entry.Inode)
 			inodeStruct.IsValid = false
-			writeInodeToDisk(&inodeStruct, entry.Inode, ReadSuperBlock())
+			WriteInodeToDisk(&inodeStruct, entry.Inode, ReadSuperBlock())
 			//now write directory structure back out to disk
 			currentDirectoryBlockBytes := EncodeToBytes(directoryEntryBlock)
 			copy(Disk[parentDir.DirectBlock1][:], currentDirectoryBlockBytes)
+			return
 		}
 		validDirectoryEntries++
 	}
@@ -519,7 +497,7 @@ func Write(file *INode, inodeNum int, content []byte) {
 			}
 		}
 	}
-	writeInodeToDisk(file, inodeNum, ReadSuperBlock())
+	WriteInodeToDisk(file, inodeNum, ReadSuperBlock())
 }
 
 // returns location of newly allocated block
@@ -565,23 +543,70 @@ func getIndirectBlockFromDisk(indirectBlockNum int) [1024]byte {
 	return Disk[indirectBlockNum]
 }
 
-func Ls(inode *INode) []string {
-	if !inode.IsDirectory {
-		log.Fatal("Not a directory")
-	}
-	dirBlock := Disk[inode.DirectBlock1]
+// func Ls(inode *INode) []string {
+// 	if !inode.IsDirectory {
+// 		log.Fatal("Not a directory")
+// 	}
+// 	dirBlock := Disk[inode.DirectBlock1]
+// 	dirEntries := DirectoryBlock{}
+// 	decoder := gob.NewDecoder(bytes.NewReader(dirBlock[:]))
+// 	err := decoder.Decode(&dirEntries)
+// 	if err != nil {
+// 		log.Fatal("Error decoding directory block", err)
+// 	}
+// 	files := make([]string, 0)
+// 	for _, entry := range dirEntries {
+// 		if entry.Inode != 0 {
+// 			files = append(files, string(entry.Name[:]))
+// 		}
+// 	}
+// 	return files
+// }
+
+func IsDir(inodeNum int) bool {
+	inode := getInodeFromDisk(inodeNum)
+	return inode.IsDirectory
+}
+
+func Mkdir(name string) {
+	// Open the parent directory in read mode
+	parentDirInode, _ := Open(READ, ".", RootFolder)
+
+	// Create a new directory with the specified name
+	newDirInode, newDirInodeNum := Open(CREATE, name, parentDirInode)
+
+	// Create a new directory block
+	dirBlock, newDirInode := CreateDirectoryFile(parentDirInode.DirectBlock1, newDirInodeNum)
+
+	// Write the directory block to disk
+	bytesForDirectoryBlock := EncodeToBytes(dirBlock)
+	Write(&newDirInode, newDirInodeNum, bytesForDirectoryBlock)
+
+	// Write the updated directory inode back to disk
+	WriteInodeToDisk(&newDirInode, newDirInodeNum, ReadSuperBlock())
+}
+
+func Ls(dirInode INode) []string {
+	dirBlock := Disk[dirInode.DirectBlock1]
 	dirEntries := DirectoryBlock{}
 	decoder := gob.NewDecoder(bytes.NewReader(dirBlock[:]))
 	err := decoder.Decode(&dirEntries)
 	if err != nil {
 		log.Fatal("Error decoding directory block", err)
 	}
+
 	files := make([]string, 0)
 	for _, entry := range dirEntries {
 		if entry.Inode != 0 {
+			if IsDir(entry.Inode) {
+				fmt.Printf("\033[34m%s\033[0m\n", string(entry.Name[:]))
+			} else {
+				fmt.Println(string(entry.Name[:]))
+			}
 			files = append(files, string(entry.Name[:]))
 		}
 	}
+
 	return files
 }
 
@@ -602,8 +627,10 @@ func getInodeFromDiskByName(name string, parentDirInode INode) INode {
 }
 
 func Rm(parentDirInode INode, fileName string) {
+	// Open the parent directory in read mode
 	parentDirInode, _ = Open(READ, ".", parentDirInode)
-	// find inode number of file
+
+	// Find the inode number of the file
 	fileInodeNum := -1
 	dirBlock := Disk[parentDirInode.DirectBlock1]
 	dirEntries := DirectoryBlock{}
@@ -618,7 +645,65 @@ func Rm(parentDirInode INode, fileName string) {
 			break
 		}
 	}
-	Unlink(fileInodeNum, parentDirInode)
-	writeInodeToDisk(&parentDirInode, fileInodeNum, ReadSuperBlock())
 
+	// Unlink the file
+	Unlink(fileInodeNum, parentDirInode)
+
+	// Write the updated parent directory inode back to disk
+	WriteInodeToDisk(&parentDirInode, fileInodeNum, ReadSuperBlock())
+}
+
+func Cp(srcName string, destName string) {
+	// Open the source file in read mode
+	srcInode, _ := Open(READ, srcName, RootFolder)
+
+	// Create a new file with the destination name
+	destInode, destInodeNum := Open(CREATE, destName, RootFolder)
+
+	// Copy the contents of the source file to the destination file
+	content := Read(&srcInode)
+	Write(&destInode, destInodeNum, []byte(content))
+
+	// Write the updated destination inode back to disk
+	WriteInodeToDisk(&destInode, destInodeNum, ReadSuperBlock())
+}
+
+func Cd(dirName string) {
+	// Check if the user has specified the home directory
+	if dirName == "~" {
+		dirName = "HOME"
+	}
+
+	// Open the directory in read mode
+	dirInode, _ := Open(READ, dirName, RootFolder)
+
+	// Change the current working directory to the specified directory
+	cwd := dirInode
+	RootFolder = cwd
+}
+
+func Redirect(srcName string, destName string) {
+	// Open the source file in read mode
+	srcInode, _ := Open(READ, srcName, RootFolder)
+
+	// Create a new file with the destination name
+	destInode, destInodeNum := Open(CREATE, destName, RootFolder)
+
+	// Copy the contents of the source file to the destination file
+	content := Read(&srcInode)
+	Write(&destInode, destInodeNum, []byte(content))
+
+	// Write the updated destination inode back to disk
+	WriteInodeToDisk(&destInode, destInodeNum, ReadSuperBlock())
+}
+
+func Cat(fileName string) {
+	// Open the file in read mode
+	fileInode, _ := Open(READ, fileName, RootFolder)
+
+	// Read the contents of the file
+	content := Read(&fileInode)
+
+	// Print the contents of the file
+	fmt.Println(content)
 }
