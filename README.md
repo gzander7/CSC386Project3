@@ -10,7 +10,7 @@ This is a simple shell implemented in Go. It provides basic file system operatio
 - `cp [source] [destination]`: Copies a file from the source to the destination.
 - `rm [file]`: Removes a file from the file system.
 - `more [file]`: Reads in a file and prints it out.
-- `whoami`: Prints the user's name and user ID.
+- `whoami`: Prints the user's name and user ID.(hard coded for demonstration)
 - `exit`: Exits the shell.
 - Redirection: The shell supports redirection using the '>>' operator. For example, `cat testinput2.txt >> new/test.txt` will put the file `test.txt` in the directory `new`.
 ## Issues
