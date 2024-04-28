@@ -65,11 +65,11 @@ func getParentandChildInodes(path string) (parentinode FileSystem.INode, childin
 	return parentinode, childinode, parentinodenum, childinodenum
 }
 
-// ExecuteCommand function allows for the use of os commands in the shell such as cat, ls, etc. and allows for redirection into the file system
+// ExecuteCommand function allows for the use of os commands in the shell such as cat, ls, etc. and allows for redirection into the file system(I got some help with this one as it was not so simple)
 func ExecuteCommand(command string, args []string) {
 	modifiedArgs := []string{}
 	var nextOutputFile string
-	pathInOutputFile := false
+	pathInOutputFile := false // Initialize pathInOutputFile to false for redirection into the file system without a path
 
 	// Check for redirection and store the next argument if found
 	for i, arg := range args {
