@@ -3,7 +3,6 @@ package FileSystem
 import (
 	"bytes"
 	"encoding/gob"
-	"fmt"
 	"log"
 	"strings"
 	"time"
@@ -563,147 +562,96 @@ func getIndirectBlockFromDisk(indirectBlockNum int) [1024]byte {
 // 	return files
 // }
 
-func IsDir(inodeNum int) bool {
-	inode := getInodeFromDisk(inodeNum)
-	return inode.IsDirectory
+func IsDir(inodeNum int) bool { // simple func to check if inode is a directory
+	inode := getInodeFromDisk(inodeNum) // get the inode from disk
+	return inode.IsDirectory            // return if the inode is a directory with the bool from the inode struct
 }
 
 func Mkdir(name string) {
 	// Open the parent directory in read mode
-	parentDirInode, _ := Open(READ, ".", RootFolder)
+	parentDirInode, _ := Open(READ, ".", RootFolder) // Open the parent directory in read mode
 
 	// Create a new directory with the specified name
-	newDirInode, newDirInodeNum := Open(CREATE, name, parentDirInode)
+	newDirInode, newDirInodeNum := Open(CREATE, name, parentDirInode) // Create a new directory with the specified name
 
 	// Create a new directory block
-	dirBlock, newDirInode := CreateDirectoryFile(parentDirInode.DirectBlock1, newDirInodeNum)
+	dirBlock, newDirInode := CreateDirectoryFile(parentDirInode.DirectBlock1, newDirInodeNum) // Create a new directory block
 
 	// Write the directory block to disk
-	bytesForDirectoryBlock := EncodeToBytes(dirBlock)
-	Write(&newDirInode, newDirInodeNum, bytesForDirectoryBlock)
+	bytesForDirectoryBlock := EncodeToBytes(dirBlock)           // Encode the directory block to bytes for writing to disk
+	Write(&newDirInode, newDirInodeNum, bytesForDirectoryBlock) // Write the directory block to disk
 
 	// Write the updated directory inode back to disk
-	WriteInodeToDisk(&newDirInode, newDirInodeNum, ReadSuperBlock())
+	WriteInodeToDisk(&newDirInode, newDirInodeNum, ReadSuperBlock()) // Write the updated directory inode back to disk
 }
 
-func Ls(dirInode INode) []string {
-	dirBlock := Disk[dirInode.DirectBlock1]
-	dirEntries := DirectoryBlock{}
-	decoder := gob.NewDecoder(bytes.NewReader(dirBlock[:]))
-	err := decoder.Decode(&dirEntries)
-	if err != nil {
-		log.Fatal("Error decoding directory block", err)
-	}
-
-	files := make([]string, 0)
-	for _, entry := range dirEntries {
-		if entry.Inode != 0 {
-			if IsDir(entry.Inode) {
-				fmt.Printf("\033[34m%s\033[0m\n", string(entry.Name[:]))
-			} else {
-				fmt.Println(string(entry.Name[:]))
-			}
-			files = append(files, string(entry.Name[:]))
-		}
-	}
-
-	return files
-}
-
-func getInodeFromDiskByName(name string, parentDirInode INode) INode {
-	dirBlock := Disk[parentDirInode.DirectBlock1]
-	dirEntries := DirectoryBlock{}
-	decoder := gob.NewDecoder(bytes.NewReader(dirBlock[:]))
-	err := decoder.Decode(&dirEntries)
-	if err != nil {
-		log.Fatal("Error decoding directory block", err)
-	}
-	for _, entry := range dirEntries {
-		if entry.Inode != 0 && string(entry.Name[:]) == name {
-			return getInodeFromDisk(entry.Inode)
-		}
-	}
-	return INode{}
-}
+// func getInodeFromDiskByName(name string, parentDirInode INode) INode { // Originaly I thought this was needed, but it doesn't seem to be nessesary anymore
+// 	dirBlock := Disk[parentDirInode.DirectBlock1]
+// 	dirEntries := DirectoryBlock{}
+// 	decoder := gob.NewDecoder(bytes.NewReader(dirBlock[:]))
+// 	err := decoder.Decode(&dirEntries)
+// 	if err != nil {
+// 		log.Fatal("Error decoding directory block", err)
+// 	}
+// 	for _, entry := range dirEntries {
+// 		if entry.Inode != 0 && string(entry.Name[:]) == name {
+// 			return getInodeFromDisk(entry.Inode)
+// 		}
+// 	}
+// 	return INode{}
+// }
 
 func Rm(parentDirInode INode, fileName string) {
 	// Open the parent directory in read mode
-	parentDirInode, _ = Open(READ, ".", parentDirInode)
+	parentDirInode, _ = Open(READ, ".", parentDirInode) // Open the parent directory in read mode
 
 	// Find the inode number of the file
 	fileInodeNum := -1
 	dirBlock := Disk[parentDirInode.DirectBlock1]
 	dirEntries := DirectoryBlock{}
 	decoder := gob.NewDecoder(bytes.NewReader(dirBlock[:]))
-	err := decoder.Decode(&dirEntries)
-	if err != nil {
+	err := decoder.Decode(&dirEntries) //
+	if err != nil {                    // error handling
 		log.Fatal("Error decoding directory block", err)
 	}
-	for _, entry := range dirEntries {
-		if strings.TrimRight(string(entry.Name[:]), "\x00") == fileName {
-			fileInodeNum = entry.Inode
-			break
+	for _, entry := range dirEntries { // iterate through the directory entries
+		if strings.TrimRight(string(entry.Name[:]), "\x00") == fileName { // if the file name matches the file name we are looking for
+			fileInodeNum = entry.Inode // set the file inode number to the inode number of the file
+			break                      // break out of the loop
 		}
 	}
 
 	// Unlink the file
-	Unlink(fileInodeNum, parentDirInode)
-
+	Unlink(fileInodeNum, parentDirInode) // Unlink the file
 	// Write the updated parent directory inode back to disk
-	WriteInodeToDisk(&parentDirInode, fileInodeNum, ReadSuperBlock())
+	WriteInodeToDisk(&parentDirInode, fileInodeNum, ReadSuperBlock()) // Write the updated parent directory inode back to disk
 }
 
 func Cp(srcName string, destName string) {
 	// Open the source file in read mode
-	srcInode, _ := Open(READ, srcName, RootFolder)
+	srcInode, _ := Open(READ, srcName, RootFolder) // Open the source file in read mode
 
 	// Create a new file with the destination name
-	destInode, destInodeNum := Open(CREATE, destName, RootFolder)
+	destInode, destInodeNum := Open(CREATE, destName, RootFolder) // Create a new file with the destination name
 
 	// Copy the contents of the source file to the destination file
-	content := Read(&srcInode)
-	Write(&destInode, destInodeNum, []byte(content))
+	content := Read(&srcInode)                       // Copy the contents of the source file to the destination file
+	Write(&destInode, destInodeNum, []byte(content)) // Write the contents of the source file to the destination file
 
 	// Write the updated destination inode back to disk
-	WriteInodeToDisk(&destInode, destInodeNum, ReadSuperBlock())
+	WriteInodeToDisk(&destInode, destInodeNum, ReadSuperBlock()) // Write the updated destination inode back to disk
 }
 
-func Cd(dirName string) {
-	// Check if the user has specified the home directory
-	if dirName == "~" {
-		dirName = "HOME"
+func FindSubdirectories(dir string) (INode, int) { //this is a helper function for the shell
+	stringSlice := strings.Split(dir, "/")
+	parentNode := RootFolder //start at the root
+	parentNodeNum := 0
+	for _, str := range stringSlice { //iterate through the string slice
+		parentNode, parentNodeNum = Open(READ, str, parentNode) //open the directory
+		if parentNodeNum == 0 {                                 //if the directory is not found, return an error
+			log.Fatal("Location not found")
+			return INode{}, 0
+		}
 	}
-
-	// Open the directory in read mode
-	dirInode, _ := Open(READ, dirName, RootFolder)
-
-	// Change the current working directory to the specified directory
-	cwd := dirInode
-	RootFolder = cwd
-}
-
-func Redirect(srcName string, destName string) {
-	// Open the source file in read mode
-	srcInode, _ := Open(READ, srcName, RootFolder)
-
-	// Create a new file with the destination name
-	destInode, destInodeNum := Open(CREATE, destName, RootFolder)
-
-	// Copy the contents of the source file to the destination file
-	content := Read(&srcInode)
-	Write(&destInode, destInodeNum, []byte(content))
-
-	// Write the updated destination inode back to disk
-	WriteInodeToDisk(&destInode, destInodeNum, ReadSuperBlock())
-}
-
-func Cat(fileName string) {
-	// Open the file in read mode
-	fileInode, _ := Open(READ, fileName, RootFolder)
-
-	// Read the contents of the file
-	content := Read(&fileInode)
-
-	// Print the contents of the file
-	fmt.Println(content)
+	return parentNode, parentNodeNum // return the parent node and the parent node number
 }
