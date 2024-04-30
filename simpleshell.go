@@ -4,9 +4,18 @@ import (
 	"Project2Demo/FileSystem"
 	"bufio"
 	"fmt"
+	"log"
 	"os"
 	"strings"
 )
+
+func Cat(args []string) {
+	for _, fileName := range args { // Loop through the file names
+		fileInode, _ := FileSystem.Open(FileSystem.READ, fileName, FileSystem.RootFolder) // Open the file
+		fileContent := FileSystem.Read(&fileInode)                                        // Read the file content
+		fmt.Println(fileContent)                                                          // Print the file content
+	} // end of for loop
+}
 
 // mkdir func creates a new directory in the file system and writes the directory block to the file system using the open and write functions from the FileSys.go file system
 func mkdir(name string) {
@@ -111,7 +120,30 @@ func ExecuteCommand(command string, args []string) {
 
 // main is the entry point of the program.
 func main() {
+	// this is I think the test I promised you - except that maybe the string is too short
 	FileSystem.InitializeFileSystem()
+	newFileInode, firstInodeNun := FileSystem.Open(FileSystem.CREATE, "Text.txt", FileSystem.RootFolder)
+	stringContents, err := os.ReadFile("testInput.txt")
+	if err != nil {
+		log.Fatal("Oh yikes why couldn't we open the file!?!?!")
+	}
+	contentToWrite := []byte(stringContents)
+
+	FileSystem.Write(&newFileInode, firstInodeNun, contentToWrite)
+	fileContents := FileSystem.Read(&newFileInode)
+	fmt.Println(fileContents)
+	newDirectoryInode, newInodeNum := FileSystem.Open(FileSystem.CREATE, "NewDir",
+		FileSystem.RootFolder)
+	directoryBlock, newDirectoryInode := FileSystem.CreateDirectoryFile(FileSystem.ReadSuperBlock().RootDirInode, newInodeNum)
+	bytesForDirectoryBlock := FileSystem.EncodeToBytes(directoryBlock)
+	FileSystem.Write(&newDirectoryInode, newInodeNum, bytesForDirectoryBlock)
+	file2Inode, lastFileInodeNum := FileSystem.Open(FileSystem.CREATE, "FileInSubdir", newDirectoryInode)
+	dataToWrite := []byte("Help I'm stuck in a virtual file System\n    ")
+	FileSystem.Write(&file2Inode, lastFileInodeNum, dataToWrite)
+	fileInSubdirectoryContents := FileSystem.Read(&file2Inode)
+	fmt.Println(fileInSubdirectoryContents)
+	//now test delete
+	FileSystem.Unlink(lastFileInodeNum, newDirectoryInode)
 	fmt.Println("Welcome to GagesGoShell!")
 	// Create a reader to read input from standard input
 	reader := bufio.NewReader(os.Stdin)
@@ -178,6 +210,13 @@ func main() {
 			// Print users name and user ID
 			//fmt.Println("User:", os.Getenv("USER"))
 			fmt.Println("User:", "Gage Ross", "User ID:", os.Getuid()) // Hardcoded user name for demonstration
+		case "Cat": //use cap C for cat to differentiate from the built in cat command in the os
+			// Execute cat command with arguments
+			if len(parts) < 2 {
+				fmt.Println("Usage: cat [file]")
+				continue
+			}
+			Cat(parts[1:])
 		case "exit":
 			// Exit the shell
 			os.Exit(0)
